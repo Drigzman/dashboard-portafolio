@@ -324,6 +324,37 @@ const tn = (v) => {
   return parseFloat(s) || 0;
 };
 const sl=(p,m)=>{document.getElementById('lb').style.width=p+'%';document.getElementById('lstat').textContent=m;};
+const showFatal = (msg) => {
+  try{
+    document.getElementById('lb').style.width='100%';
+    document.getElementById('lstat').textContent = msg;
+    const off = document.getElementById('offline-note');
+    if(off){
+      off.classList.add('visible');
+      off.textContent = '⚠️ ' + msg;
+    }
+  }catch(_){}
+};
+
+window.addEventListener('error', (e) => {
+  showFatal('JS error: ' + (e.message || 'Error'));
+});
+
+window.addEventListener('unhandledrejection', (e) => {
+  const r = e && e.reason;
+  showFatal('Promise: ' + (r && (r.message || String(r)) ? (r.message || String(r)) : 'Error'));
+});
+
+const fetchWithTimeout = async (url, ms=10000) => {
+  const controller = new AbortController();
+  const t = setTimeout(()=>controller.abort(), ms);
+  try{
+    return await fetch(url, { cache:'no-store', signal: controller.signal });
+  } finally {
+    clearTimeout(t);
+  }
+};
+
 
 function showTab(name,el){document.querySelectorAll('.tab-panel').forEach(p=>p.classList.remove('active'));document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));document.getElementById('tab-'+name).classList.add('active');el.classList.add('active');}
 
@@ -394,62 +425,78 @@ function enrichFallback(data){
 
 async function loadData(){
   const btn=document.getElementById('refresh-btn');
-  btn.classList.add('spinning');
-  sl(10,'Conectando con Google Sheets...');
+  if(btn) btn.classList.add('spinning');
+
   let assets=null,isLive=false;
   let errMsg='';
 
   try{
-    const res=await fetch(CSV_URL+'&t='+Date.now(), { cache:'no-store' });
+    sl(10,'Conectando con Google Sheets...');
+    sl(15,'Descargando CSV...');
+    const res = await fetchWithTimeout(CSV_URL+'&t='+Date.now(), 12000);
+
     sl(50,'Procesando datos...');
-    if(!res.ok)throw new Error('HTTP '+res.status);
+    if(!res.ok) throw new Error('HTTP '+res.status);
 
     const text=await res.text();
+    sl(60,'Parseando CSV...');
     const rows=parseCSV(text);
-    if(!rows.length)throw new Error('CSV vacío o sin filas');
+    if(!rows.length) throw new Error('CSV vacío o sin filas');
 
     assets=rowsToAssets(rows);
     if(!assets.length){
-      const keys = Object.keys(rows[0]||{}).slice(0,20).join(', ');
+      const keys = Object.keys(rows[0]||{}).slice(0,25).join(', ');
       throw new Error('CSV leído, pero no pude mapear columnas/valores. Encabezados detectados: ' + (keys || '(sin headers)'));
     }
 
     isLive=true;
   }catch(e){
-    errMsg = (e && (e.message || String(e))) ? (e.message || String(e)) : 'Error desconocido';
+    if(e && e.name === 'AbortError'){
+      errMsg = 'Timeout esperando Google Sheets (posible bloqueo/CORS/red).';
+    }else{
+      errMsg = (e && (e.message || String(e))) ? (e.message || String(e)) : 'Error desconocido';
+    }
     console.warn('Google Sheets no disponible, usando datos locales:', errMsg);
   }
 
-  const offline = document.getElementById('offline-note');
+  try{
+    const offline = document.getElementById('offline-note');
 
-  if(!assets||!assets.length){
-    assets=enrichFallback(FALLBACK);
+    if(!assets||!assets.length){
+      assets=enrichFallback(FALLBACK);
 
-    offline.classList.add('visible');
-    offline.textContent =
-      '⚡ Modo local. Motivo: ' + (errMsg || 'No se pudo leer la Google Sheet') +
-      ' — Si dice "Failed to fetch" suele ser CORS. Solución: proxy en /api dentro de Vercel (sin dominio propio).';
+      if(offline){
+        offline.classList.add('visible');
+        offline.textContent =
+          '⚡ Modo local. Motivo: ' + (errMsg || 'No se pudo leer la Google Sheet') +
+          ' — Si dice "Failed to fetch" suele ser CORS. Solución: proxy /api en Vercel (no requiere dominio propio).';
+      }
 
-    document.getElementById('live-badge').style.display='none';
-    document.getElementById('static-badge').classList.add('visible');
-  } else {
-    offline.classList.remove('visible');
-    // (Opcional) restaurar texto por defecto si alguna vez estuvo visible
-    offline.textContent = '⚡ Mostrando datos locales (última sesión). En Vercel con tu Google Sheet publicada como CSV, se cargará en tiempo real automáticamente.';
+      document.getElementById('live-badge').style.display='none';
+      document.getElementById('static-badge').classList.add('visible');
+    } else {
+      if(offline){
+        offline.classList.remove('visible');
+        offline.textContent = '⚡ Mostrando datos locales (última sesión). En Vercel con tu Google Sheet publicada como CSV, se cargará en tiempo real automáticamente.';
+      }
 
-    document.getElementById('live-badge').style.display='';
-    document.getElementById('static-badge').classList.remove('visible');
+      document.getElementById('live-badge').style.display='';
+      document.getElementById('static-badge').classList.remove('visible');
+    }
+
+    sl(80,'Construyendo dashboard...');
+    buildDashboard(assets,isLive);
+
+    sl(100,'✓ Listo');
+    setTimeout(()=>document.getElementById('ls').classList.add('hidden'),400);
+
+    document.getElementById('last-update').textContent =
+      (isLive?'🟢 Live — ':'📋 Local — ')+'Actualizado: '+new Date().toLocaleString('es-CO');
+  }catch(e){
+    showFatal('Error construyendo dashboard: ' + (e && (e.message || String(e)) ? (e.message || String(e)) : 'Error'));
+  }finally{
+    if(btn) btn.classList.remove('spinning');
   }
-
-  sl(80,'Construyendo dashboard...');
-  buildDashboard(assets,isLive);
-  sl(100,'✓ Listo');
-  setTimeout(()=>document.getElementById('ls').classList.add('hidden'),400);
-
-  document.getElementById('last-update').textContent =
-    (isLive?'🟢 Live — ':'📋 Local — ')+'Actualizado: '+new Date().toLocaleString('es-CO');
-
-  btn.classList.remove('spinning');
 }
 
 function buildDashboard(assets,isLive){
