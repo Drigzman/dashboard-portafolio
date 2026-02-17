@@ -260,12 +260,10 @@
 // ============================================================
 // TU GOOGLE SHEET CSV URL
 // ============================================================
-// URLs para conectar con Google Sheets (se intentan en orden)
-const CSV_URLS = [
-  'https://docs.google.com/spreadsheets/d/1B3u8KWq2PXr-GHYkV7Uk0LMLBJ9Mir9CTxhE2AW_MYY/gviz/tq?tqx=out:csv&sheet=DASHBOARD',
-  'https://docs.google.com/spreadsheets/d/1B3u8KWq2PXr-GHYkV7Uk0LMLBJ9Mir9CTxhE2AW_MYY/export?format=csv&gid=1310764306',
-  'https://docs.google.com/spreadsheets/d/e/2PACX-1vRZLeM8ZIZ4v8B-XJ8XZSi0rvZ-umEyoAlRCswkiWMOD64CUx1M22kf2axTWElyzslLpClm_DDAgO1Y/pub?gid=1310764306&single=true&output=csv'
-];
+// URL para conectar con Google Sheets (gviz endpoint — compatible con CORS)
+const SHEET_ID = '1B3u8KWq2PXr-GHYkV7Uk0LMLBJ9Mir9CTxhE2AW_MYY';
+const SHEET_NAME = 'DASHBOARD';
+const GVIZ_URL = 'https://docs.google.com/spreadsheets/d/'+SHEET_ID+'/gviz/tq?tqx=out:json&sheet='+SHEET_NAME;
 
 // ============================================================
 // DATOS DE RESPALDO (tus datos reales — se usan si no hay red)
@@ -314,6 +312,26 @@ function parseCSV(t){
   return lines.slice(1).filter(r=>r.some(c=>c&&c!=='')).map(row=>{const o={};h.forEach((hh,i)=>{o[hh]=(row[i]||'').replace(/"/g,'').trim();});return o;});
 }
 
+function parseGvizJson(text){
+  // Google devuelve: google.visualization.Query.setResponse({...})
+  const match=text.match(/google\.visualization\.Query\.setResponse\(([\s\S]+)\);?\s*$/);
+  if(!match)return[];
+  const json=JSON.parse(match[1]);
+  if(!json.table||!json.table.cols||!json.table.rows)return[];
+  const headers=json.table.cols.map(c=>(c.label||'').toUpperCase().trim());
+  return json.table.rows.map(row=>{
+    const o={};
+    row.c.forEach((cell,i)=>{
+      if(i<headers.length&&headers[i]&&cell){
+        // Usar valor raw (v) para números, formatted (f) o raw para texto
+        const v=cell.v;
+        o[headers[i]]=(v!==undefined&&v!==null)?String(v):'';
+      }
+    });
+    return o;
+  }).filter(r=>Object.values(r).some(v=>v&&v!==''));
+}
+
 function rowsToAssets(rows){
   return rows.map(r=>{
     const ticker=(r['TICKER']||r['ACTIVO']||'').toUpperCase().trim();
@@ -342,20 +360,20 @@ async function loadData(){
   btn.classList.add('spinning');
   sl(10,'Conectando con Google Sheets...');
   let assets=null,isLive=false;
-  for(let i=0;i<CSV_URLS.length&&!isLive;i++){
-    try{
-      sl(10+i*25,'Intentando conexión '+(i+1)+'...');
-      const res=await fetch(CSV_URLS[i]+'&t='+Date.now());
-      if(!res.ok)throw new Error('HTTP '+res.status);
-      const text=await res.text();
-      if(!text||text.length<10)throw new Error('Respuesta vacía');
-      const rows=parseCSV(text);
-      if(!rows.length)throw new Error('Sin datos');
-      assets=rowsToAssets(rows);
-      if(assets.length){isLive=true;console.log('Conectado via URL #'+(i+1));}
-    }catch(e){
-      console.warn('URL #'+(i+1)+' falló:',e.message);
-    }
+  try{
+    sl(30,'Descargando datos...');
+    const res=await fetch(GVIZ_URL+'&t='+Date.now());
+    if(!res.ok)throw new Error('HTTP '+res.status);
+    const text=await res.text();
+    if(!text||text.length<20)throw new Error('Respuesta vacía');
+    sl(60,'Procesando datos...');
+    const rows=parseGvizJson(text);
+    if(!rows.length)throw new Error('Sin datos en respuesta');
+    assets=rowsToAssets(rows);
+    if(assets.length){isLive=true;console.log('✅ Conectado con Google Sheets — '+assets.length+' activos cargados');}
+    else throw new Error('No se pudieron parsear activos');
+  }catch(e){
+    console.warn('Google Sheets no disponible, usando datos locales:',e.message);
   }
   if(!assets||!assets.length){
     assets=enrichFallback(FALLBACK);
