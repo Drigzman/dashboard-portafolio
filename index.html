@@ -122,17 +122,25 @@
 
 <!-- MENSAJE DE CONFIGURACIÓN -->
 <div class="config-alert" id="config-alert">
-  <h3>⚠️ CONFIGURACIÓN REQUERIDA</h3>
-  <p style="margin-bottom:12px">Para conectar con Google Sheets, sigue estos pasos:</p>
+  <h3>⚠️ NO SE PUDO CONECTAR CON GOOGLE SHEETS</h3>
+  <p style="margin-bottom:12px">Verifica estos pasos:</p>
   <ol>
     <li>Abre tu Google Sheet: <code>1B3u8KWq2PXr-GHYkV7Uk0LMLBJ9Mir9CTxhE2AW_MYY</code></li>
     <li>Haz clic en <strong>"Compartir"</strong> (esquina superior derecha)</li>
     <li>En "Acceso general", cambia a <strong>"Cualquier persona con el enlace"</strong></li>
     <li>Asegúrate de que el permiso sea <strong>"Lector"</strong></li>
-    <li>Verifica que la pestaña se llame exactamente <code>RESÚMEN</code></li>
+    <li>Verifica que la pestaña se llame exactamente <code>RESÚMEN</code> (con tilde en la Ú)</li>
     <li>Verifica que los datos estén en el rango <code>A1:S13</code></li>
-    <li>Recarga esta página (F5)</li>
   </ol>
+  <div style="margin-top:16px;display:flex;gap:12px">
+    <button onclick="window.open('https://docs.google.com/spreadsheets/d/1B3u8KWq2PXr-GHYkV7Uk0LMLBJ9Mir9CTxhE2AW_MYY/edit', '_blank')" style="background:var(--blue);color:#fff;border:none;padding:10px 16px;border-radius:6px;cursor:pointer;font-weight:600">
+      📊 Abrir Google Sheet
+    </button>
+    <button onclick="testConnection()" style="background:var(--gold);color:#0a0c0f;border:none;padding:10px 16px;border-radius:6px;cursor:pointer;font-weight:600">
+      🔍 Probar Conexión
+    </button>
+  </div>
+  <div id="test-result" style="margin-top:12px;padding:12px;background:rgba(0,0,0,0.3);border-radius:6px;font-family:'Space Mono',monospace;font-size:11px;display:none"></div>
 </div>
 
 <div class="container">
@@ -262,10 +270,11 @@ const SHEET_ID = '1B3u8KWq2PXr-GHYkV7Uk0LMLBJ9Mir9CTxhE2AW_MYY';
 const SHEET_NAME = 'RESÚMEN'; // DEBE COINCIDIR EXACTAMENTE CON EL NOMBRE DE TU PESTAÑA
 const RANGE = 'A1:S13'; // Tu rango de datos
 
-// URL mejorada con rango específico
-const GVIZ_URL = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:json&sheet=${SHEET_NAME}&range=${RANGE}`;
+// URL mejorada con rango específico y URL-encoding para caracteres especiales
+const GVIZ_URL = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:json&sheet=${encodeURIComponent(SHEET_NAME)}&range=${RANGE}`;
 
 console.log('📡 URL de conexión:', GVIZ_URL);
+console.log('📋 Nombre de pestaña (encoded):', encodeURIComponent(SHEET_NAME));
 
 // ============================================================
 // DATOS DE RESPALDO (se usan si no hay conexión)
@@ -306,6 +315,32 @@ const tn=v=>{if(!v||v==='-'||v==='--')return 0;return parseFloat(String(v).repla
 const sl=(p,m)=>{document.getElementById('lb').style.width=p+'%';document.getElementById('lstat').textContent=m;};
 
 function showTab(name,el){document.querySelectorAll('.tab-panel').forEach(p=>p.classList.remove('active'));document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));document.getElementById('tab-'+name).classList.add('active');el.classList.add('active');}
+
+async function testConnection(){
+  const result = document.getElementById('test-result');
+  result.style.display = 'block';
+  result.innerHTML = '🔄 Probando conexión...';
+  
+  try {
+    const url = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:json&sheet=${encodeURIComponent(SHEET_NAME)}&range=${RANGE}&t=${Date.now()}`;
+    console.log('🧪 URL de prueba:', url);
+    
+    const res = await fetch(url);
+    const text = await res.text();
+    
+    result.innerHTML = `
+      <div><strong>Status:</strong> ${res.status} ${res.statusText}</div>
+      <div><strong>Tamaño respuesta:</strong> ${text.length} caracteres</div>
+      <div><strong>Primeros 300 chars:</strong></div>
+      <div style="white-space:pre-wrap;margin-top:8px;color:var(--green);max-height:200px;overflow:auto">${text.substring(0, 300)}...</div>
+      <div style="margin-top:8px;color:var(--muted)">✅ Revisa la consola (F12) para ver la respuesta completa</div>
+    `;
+    console.log('📄 Respuesta completa:', text);
+  } catch(e) {
+    result.innerHTML = `<div style="color:var(--red)">❌ Error: ${e.message}</div>`;
+    console.error('Error en prueba:', e);
+  }
+}
 
 function parseGvizJson(text){
   const match=text.match(/google\.visualization\.Query\.setResponse\(([\s\S]+)\);?\s*$/);
@@ -376,6 +411,7 @@ async function loadData(){
     
     const res=await fetch(GVIZ_URL+'&t='+Date.now());
     console.log('📡 Respuesta HTTP:', res.status, res.statusText);
+    console.log('📡 Headers:', [...res.headers.entries()]);
     
     if(!res.ok){
       throw new Error(`HTTP ${res.status}: ${res.statusText}`);
@@ -383,6 +419,7 @@ async function loadData(){
     
     const text=await res.text();
     console.log('📄 Tamaño de respuesta:', text.length, 'caracteres');
+    console.log('📄 Primeros 500 caracteres:', text.substring(0, 500));
     
     if(!text||text.length<20){
       throw new Error('Respuesta vacía o muy corta');
@@ -391,6 +428,12 @@ async function loadData(){
     // Verificar si es un error de acceso
     if(text.includes('Forbidden') || text.includes('403')){
       throw new Error('Acceso denegado - La hoja debe ser pública');
+    }
+    
+    // Verificar si hay un error de Google
+    if(text.includes('"status":"error"')){
+      console.error('❌ Google Sheets devolvió un error:', text);
+      throw new Error('Google Sheets reportó un error - verifica el nombre de la pestaña');
     }
     
     sl(60,'Procesando datos...');
