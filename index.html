@@ -260,7 +260,12 @@
 // ============================================================
 // TU GOOGLE SHEET CSV URL
 // ============================================================
-const CSV_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vRZLeM8ZIZ4v8B-XJ8XZSi0rvZ-umEyoAlRCswkiWMOD64CUx1M22kf2axTWElyzslLpClm_DDAgO1Y/pub?gid=1310764306&single=true&output=csv';
+// URLs para conectar con Google Sheets (se intentan en orden)
+const CSV_URLS = [
+  'https://docs.google.com/spreadsheets/d/1B3u8KWq2PXr-GHYkV7Uk0LMLBJ9Mir9CTxhE2AW_MYY/gviz/tq?tqx=out:csv&sheet=DASHBOARD',
+  'https://docs.google.com/spreadsheets/d/1B3u8KWq2PXr-GHYkV7Uk0LMLBJ9Mir9CTxhE2AW_MYY/export?format=csv&gid=1310764306',
+  'https://docs.google.com/spreadsheets/d/e/2PACX-1vRZLeM8ZIZ4v8B-XJ8XZSi0rvZ-umEyoAlRCswkiWMOD64CUx1M22kf2axTWElyzslLpClm_DDAgO1Y/pub?gid=1310764306&single=true&output=csv'
+];
 
 // ============================================================
 // DATOS DE RESPALDO (tus datos reales — se usan si no hay red)
@@ -337,17 +342,20 @@ async function loadData(){
   btn.classList.add('spinning');
   sl(10,'Conectando con Google Sheets...');
   let assets=null,isLive=false;
-  try{
-    const res=await fetch(CSV_URL+'&t='+Date.now());
-    sl(50,'Procesando datos...');
-    if(!res.ok)throw new Error('HTTP '+res.status);
-    const text=await res.text();
-    const rows=parseCSV(text);
-    if(!rows.length)throw new Error('Sin datos');
-    assets=rowsToAssets(rows);
-    if(assets.length)isLive=true;
-  }catch(e){
-    console.warn('Google Sheets no disponible, usando datos locales:',e.message);
+  for(let i=0;i<CSV_URLS.length&&!isLive;i++){
+    try{
+      sl(10+i*25,'Intentando conexión '+(i+1)+'...');
+      const res=await fetch(CSV_URLS[i]+'&t='+Date.now());
+      if(!res.ok)throw new Error('HTTP '+res.status);
+      const text=await res.text();
+      if(!text||text.length<10)throw new Error('Respuesta vacía');
+      const rows=parseCSV(text);
+      if(!rows.length)throw new Error('Sin datos');
+      assets=rowsToAssets(rows);
+      if(assets.length){isLive=true;console.log('Conectado via URL #'+(i+1));}
+    }catch(e){
+      console.warn('URL #'+(i+1)+' falló:',e.message);
+    }
   }
   if(!assets||!assets.length){
     assets=enrichFallback(FALLBACK);
