@@ -260,8 +260,8 @@
 // CONEXIÓN CON GOOGLE SHEETS (gviz — compatible con CORS)
 // ============================================================
 const SHEET_ID = '1B3u8KWq2PXr-GHYkV7Uk0LMLBJ9Mir9CTxhE2AW_MYY';
-const SHEET_NAME = 'DASHBOARD';
-const GVIZ_URL = 'https://docs.google.com/spreadsheets/d/'+SHEET_ID+'/gviz/tq?tqx=out:json&sheet='+SHEET_NAME;
+const SHEET_NAME = 'RESÚMEN';
+const GVIZ_URL = 'https://docs.google.com/spreadsheets/d/'+SHEET_ID+'/gviz/tq?tqx=out:json&sheet='+encodeURIComponent(SHEET_NAME);
 
 // ============================================================
 // DATOS DE RESPALDO (tus datos reales — se usan si no hay red)
@@ -304,7 +304,6 @@ const sl=(p,m)=>{document.getElementById('lb').style.width=p+'%';document.getEle
 function showTab(name,el){document.querySelectorAll('.tab-panel').forEach(p=>p.classList.remove('active'));document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));document.getElementById('tab-'+name).classList.add('active');el.classList.add('active');}
 
 function parseGvizJson(text){
-  // Google devuelve: google.visualization.Query.setResponse({...})
   let jsonStr=text;
   const prefix='google.visualization.Query.setResponse(';
   const idx=text.indexOf(prefix);
@@ -315,34 +314,43 @@ function parseGvizJson(text){
   let json;
   try{json=JSON.parse(jsonStr);}catch(e){console.error('Error parseando JSON gviz:',e.message);return[];}
   if(!json.table){console.warn('No hay tabla en respuesta gviz');return[];}
-  const cols=json.table.cols||[];
-  const dataRows=json.table.rows||[];
-  if(!dataRows.length){console.warn('0 filas en respuesta gviz');return[];}
-  // Obtener headers de las etiquetas de columna
-  let headers=cols.map(c=>(c.label||'').trim().toUpperCase());
-  let startRow=0;
-  console.log('gviz cols labels:',JSON.stringify(headers));
-  // Si no hay labels útiles, usar la primera fila como headers
-  if(!headers.some(h=>h.length>0)&&dataRows.length>0){
-    headers=dataRows[0].c.map(cell=>cell&&cell.v?String(cell.v).trim().toUpperCase():'');
-    startRow=1;
-    console.log('Usando fila 1 como headers:',JSON.stringify(headers));
+  const allRows=json.table.rows||[];
+  if(!allRows.length){console.warn('0 filas en respuesta gviz');return[];}
+  // Buscar la fila que contiene los encabezados reales (ACTIVO, BROKER, INVERTIDO, etc.)
+  const knownHeaders=['ACTIVO','BROKER','INVERTIDO','SALDO','ROI','DIVISA','TICKER'];
+  let headerRowIdx=-1;
+  let headers=[];
+  for(let r=0;r<Math.min(allRows.length,15);r++){
+    const row=allRows[r];
+    if(!row.c)continue;
+    const vals=row.c.map(cell=>cell&&cell.v?String(cell.v).trim().toUpperCase():'');
+    const matchCount=vals.filter(v=>knownHeaders.includes(v)).length;
+    console.log('Fila '+r+' ('+matchCount+' matches):',vals.filter(v=>v).join(', '));
+    if(matchCount>=3){
+      headerRowIdx=r;
+      headers=vals;
+      break;
+    }
   }
-  // Mapear filas a objetos usando valor raw (v) — no formatted (f)
+  if(headerRowIdx<0){console.warn('No se encontró fila de encabezados en las primeras 15 filas');return[];}
+  console.log('✅ Headers en fila '+(headerRowIdx+1)+':',headers.filter(h=>h).join(', '));
+  // Parsear datos desde la fila siguiente a los headers
   const result=[];
-  for(let r=startRow;r<dataRows.length;r++){
-    const row=dataRows[r];
+  for(let r=headerRowIdx+1;r<allRows.length;r++){
+    const row=allRows[r];
     if(!row.c)continue;
     const o={};
+    let hasData=false;
     for(let i=0;i<row.c.length&&i<headers.length;i++){
       if(!headers[i])continue;
       const cell=row.c[i];
       if(!cell||cell.v===null||cell.v===undefined){o[headers[i]]='';continue;}
       o[headers[i]]=String(cell.v);
+      hasData=true;
     }
-    if(Object.values(o).some(v=>v&&v!==''))result.push(o);
+    if(hasData)result.push(o);
   }
-  console.log('gviz parseó '+result.length+' filas');
+  console.log('gviz parseó '+result.length+' filas de datos');
   if(result.length>0)console.log('Fila 1:',JSON.stringify(result[0]).substring(0,500));
   return result;
 }
