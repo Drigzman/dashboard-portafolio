@@ -261,7 +261,9 @@
 // ============================================================
 const SHEET_ID = '1B3u8KWq2PXr-GHYkV7Uk0LMLBJ9Mir9CTxhE2AW_MYY';
 const SHEET_NAME = 'RESÚMEN';
-const GVIZ_URL = 'https://docs.google.com/spreadsheets/d/'+SHEET_ID+'/gviz/tq?tqx=out:json&sheet='+encodeURIComponent(SHEET_NAME);
+const GVIZ_URL = 'https://docs.google.com/spreadsheets/d/'+SHEET_ID+'/gviz/tq?tqx=out:json&headers=1&sheet='+encodeURIComponent(SHEET_NAME);
+// Headers conocidos de tu hoja (en orden de columnas A-S) — se usan si Google no los devuelve
+const KNOWN_HEADERS=['TICKER','BROKER','DIVISA','INVERTIDO','P&G','SALDO','ROI','CLASE','SECTOR','GEO','VOL','MAX DD','LIQUIDEZ','TAMAÑO','DCA COP','DCA USD','USD','ACCIONES','PRECIO'];
 
 // ============================================================
 // DATOS DE RESPALDO (tus datos reales — se usan si no hay red)
@@ -314,30 +316,21 @@ function parseGvizJson(text){
   let json;
   try{json=JSON.parse(jsonStr);}catch(e){console.error('Error parseando JSON gviz:',e.message);return[];}
   if(!json.table){console.warn('No hay tabla en respuesta gviz');return[];}
+  const cols=json.table.cols||[];
   const allRows=json.table.rows||[];
   if(!allRows.length){console.warn('0 filas en respuesta gviz');return[];}
-  // Buscar la fila que contiene los encabezados reales (ACTIVO, BROKER, INVERTIDO, etc.)
-  const knownHeaders=['ACTIVO','BROKER','INVERTIDO','SALDO','ROI','DIVISA','TICKER'];
-  let headerRowIdx=-1;
-  let headers=[];
-  for(let r=0;r<Math.min(allRows.length,15);r++){
-    const row=allRows[r];
-    if(!row.c)continue;
-    const vals=row.c.map(cell=>cell&&cell.v?String(cell.v).trim().toUpperCase():'');
-    const matchCount=vals.filter(v=>knownHeaders.includes(v)).length;
-    console.log('Fila '+r+' ('+matchCount+' matches):',vals.filter(v=>v).join(', '));
-    if(matchCount>=3){
-      headerRowIdx=r;
-      headers=vals;
-      break;
-    }
+  // Intentar obtener headers de las etiquetas de columna
+  let headers=cols.map(c=>(c.label||'').trim().toUpperCase());
+  console.log('gviz cols labels:',JSON.stringify(headers));
+  // Si los labels están vacíos, usar KNOWN_HEADERS
+  if(!headers.some(h=>h.length>0)){
+    console.log('Labels vacíos — usando KNOWN_HEADERS');
+    headers=KNOWN_HEADERS.slice(0,cols.length);
   }
-  if(headerRowIdx<0){console.warn('No se encontró fila de encabezados en las primeras 15 filas');return[];}
-  console.log('✅ Headers en fila '+(headerRowIdx+1)+':',headers.filter(h=>h).join(', '));
-  // Parsear datos desde la fila siguiente a los headers
+  console.log('Headers finales:',headers.filter(h=>h).join(', '));
+  // Mapear filas a objetos
   const result=[];
-  for(let r=headerRowIdx+1;r<allRows.length;r++){
-    const row=allRows[r];
+  for(const row of allRows){
     if(!row.c)continue;
     const o={};
     let hasData=false;
